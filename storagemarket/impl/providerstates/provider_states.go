@@ -315,6 +315,7 @@ func HandoffDeal(ctx fsm.Context, environment ProviderDealEnvironment, deal stor
 	var packingInfo *storagemarket.PackingResult
 	var carFilePath string
 	if deal.PiecePath != "" {
+		deal.PieceType = storagemarket.PieceTypeFile
 		carFilePath = string(deal.PiecePath)
 
 		// Hand the deal off to the process that adds it to a sector
@@ -325,6 +326,7 @@ func HandoffDeal(ctx fsm.Context, environment ProviderDealEnvironment, deal stor
 			return ctx.Trigger(storagemarket.ProviderEventDealHandoffFailed, err)
 		}
 	} else {
+		deal.PieceType = storagemarket.PieceTypeCar
 		carFilePath = deal.InboundCAR
 
 		// Hand the deal off to the process that adds it to a sector
@@ -354,7 +356,7 @@ func HandoffDeal(ctx fsm.Context, environment ProviderDealEnvironment, deal stor
 	return ctx.Trigger(storagemarket.ProviderEventDealHandedOff)
 }
 
-func handoffDeal(ctx context.Context, environment ProviderDealEnvironment, deal storagemarket.MinerDeal, carFileName string) (*storagemarket.PackingResult, error) {
+func handoffDeal(ctx context.Context, environment ProviderDealEnvironment, deal storagemarket.MinerDeal, path string) (*storagemarket.PackingResult, error) {
 	return environment.Node().OnDealComplete(
 		ctx,
 		storagemarket.MinerDeal{
@@ -366,9 +368,11 @@ func handoffDeal(ctx context.Context, environment ProviderDealEnvironment, deal 
 			PublishCid:         deal.PublishCid,
 			DealID:             deal.DealID,
 			FastRetrieval:      deal.FastRetrieval,
+
+			PieceType: deal.PieceType,
 		},
 		deal.Proposal.PieceSize.Unpadded(),
-		strings.NewReader(carFileName),
+		strings.NewReader(path),
 	)
 }
 
