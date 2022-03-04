@@ -416,6 +416,13 @@ func CleanupDeal(ctx fsm.Context, environment ProviderDealEnvironment, deal stor
 			log.Warnf("deleting piece at path %s: %w", deal.MetadataPath, err)
 		}
 	}
+
+	if deal.InboundCAR != "" {
+		if err := environment.TerminateBlockstore(deal.ProposalCid, deal.InboundCAR); err != nil {
+			log.Warnf("failed to cleanup blockstore, car_path=%s: %s", deal.InboundCAR, err)
+		}
+	}
+
 	return ctx.Trigger(storagemarket.ProviderEventFinalized)
 }
 
