@@ -316,7 +316,15 @@ func HandoffDeal(ctx fsm.Context, environment ProviderDealEnvironment, deal stor
 	var carFilePath string
 	if deal.PiecePath != "" {
 		deal.PieceType = storagemarket.PieceTypeFile
-		carFilePath = string(deal.PiecePath)
+		if file, err := environment.FileStore().Open(deal.PiecePath); err != nil {
+			return ctx.Trigger(storagemarket.ProviderEventFileStoreErrored,
+				xerrors.Errorf("reading piece at path %s: %w", deal.PiecePath, err))
+		} else {
+			carFilePath = string(file.OsPath())
+			if err = file.Close(); err != nil {
+				log.Errorw("failed to close imported CAR file", "pieceCid", deal.Proposal.PieceCID, "proposalCid", deal.ProposalCid, "err", err)
+			}
+		}
 
 		// Hand the deal off to the process that adds it to a sector
 		log.Infow("handing off deal to sealing subsystem", "pieceCid", deal.Proposal.PieceCID, "proposalCid", deal.ProposalCid)
