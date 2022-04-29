@@ -3,7 +3,6 @@ package providerstates
 import (
 	"context"
 	"fmt"
-	"io"
 	"strings"
 	"time"
 
@@ -332,54 +331,43 @@ func WaitForPublish(ctx fsm.Context, environment ProviderDealEnvironment, deal s
 
 // HandoffDeal hands off a published deal for sealing and commitment in a sector
 func HandoffDeal(ctx fsm.Context, environment ProviderDealEnvironment, deal storagemarket.MinerDeal) error {
+	var err error
 	var packingInfo *storagemarket.PackingResult
 	var carFilePath string
 	if deal.PiecePath != "" {
-		// Data for offline deals is stored on disk, so if PiecePath is set,
-		// create a Reader from the file path
-		file, err := environment.FileStore().Open(deal.PiecePath)
-		if err != nil {
+		deal.PieceType = storagemarket.PieceTypeFile
+		if file, err := environment.FileStore().Open(deal.PiecePath); err != nil {
 			return ctx.Trigger(storagemarket.ProviderEventFileStoreErrored,
 				xerrors.Errorf("reading piece at path %s: %w", deal.PiecePath, err))
+		} else {
+			carFilePath = string(file.OsPath())
+			if err = file.Close(); err != nil {
+				log.Errorw("failed to close imported CAR file", "pieceCid", deal.Proposal.PieceCID, "proposalCid", deal.ProposalCid, "err", err)
+			}
 		}
-		carFilePath = string(file.OsPath())
 
 		// Hand the deal off to the process that adds it to a sector
 		log.Infow("handing off deal to sealing subsystem", "pieceCid", deal.Proposal.PieceCID, "proposalCid", deal.ProposalCid)
-		packingInfo, err = handoffDeal(ctx.Context(), environment, deal, file, uint64(file.Size()))
-		if err := file.Close(); err != nil {
-			log.Errorw("failed to close imported CAR file", "pieceCid", deal.Proposal.PieceCID, "proposalCid", deal.ProposalCid, "err", err)
-		}
-
+		packingInfo, err = handoffDeal(ctx.Context(), environment, deal, carFilePath)
 		if err != nil {
 			err = xerrors.Errorf("packing piece at path %s: %w", deal.PiecePath, err)
 			return ctx.Trigger(storagemarket.ProviderEventDealHandoffFailed, err)
 		}
 	} else {
+		deal.PieceType = storagemarket.PieceTypeCar
 		carFilePath = deal.InboundCAR
 
-		v2r, err := environment.ReadCAR(deal.InboundCAR)
-		if err != nil {
-			return ctx.Trigger(storagemarket.ProviderEventDealHandoffFailed, xerrors.Errorf("failed to open CARv2 file, proposalCid=%s: %w",
-				deal.ProposalCid, err))
-		}
-
 		// Hand the deal off to the process that adds it to a sector
-		var packingErr error
 		log.Infow("handing off deal to sealing subsystem", "pieceCid", deal.Proposal.PieceCID, "proposalCid", deal.ProposalCid)
-		packingInfo, packingErr = handoffDeal(ctx.Context(), environment, deal, v2r.DataReader(), v2r.Header.DataSize)
-		// Close the reader as we're done reading from it.
-		if err := v2r.Close(); err != nil {
-			return ctx.Trigger(storagemarket.ProviderEventDealHandoffFailed, xerrors.Errorf("failed to close CARv2 reader: %w", err))
-		}
+		packingInfo, err = handoffDeal(ctx.Context(), environment, deal, carFilePath)
 		log.Infow("closed car datareader after handing off deal to sealing subsystem", "pieceCid", deal.Proposal.PieceCID, "proposalCid", deal.ProposalCid)
-		if packingErr != nil {
-			err = xerrors.Errorf("packing piece %s: %w", deal.Ref.PieceCid, packingErr)
+		if err != nil {
+			err = xerrors.Errorf("packing piece %s: %w", deal.Ref.PieceCid, err)
 			return ctx.Trigger(storagemarket.ProviderEventDealHandoffFailed, err)
 		}
 	}
 
-	if err := recordPiece(environment, deal, packingInfo.SectorNumber, packingInfo.Offset, packingInfo.Size); err != nil {
+	if err = recordPiece(environment, deal, packingInfo.SectorNumber, packingInfo.Offset, packingInfo.Size); err != nil {
 		err = xerrors.Errorf("failed to register deal data for piece %s for retrieval: %w", deal.Ref.PieceCid, err)
 		log.Error(err.Error())
 		_ = ctx.Trigger(storagemarket.ProviderEventPieceStoreErrored, err)
@@ -387,7 +375,7 @@ func HandoffDeal(ctx fsm.Context, environment ProviderDealEnvironment, deal stor
 
 	// Register the deal data as a "shard" with the DAG store. Later it can be
 	// fetched from the DAG store during retrieval.
-	if err := environment.RegisterShard(ctx.Context(), deal.Proposal.PieceCID, carFilePath, true); err != nil {
+	if err = environment.RegisterShard(ctx.Context(), deal.Proposal.PieceCID, carFilePath, true); err != nil {
 		err = xerrors.Errorf("failed to activate shard: %w", err)
 		log.Error(err)
 	}
@@ -405,16 +393,7 @@ func HandoffDeal(ctx fsm.Context, environment ProviderDealEnvironment, deal stor
 	return ctx.Trigger(storagemarket.ProviderEventDealHandedOff)
 }
 
-func handoffDeal(ctx context.Context, environment ProviderDealEnvironment, deal storagemarket.MinerDeal, reader io.ReadSeeker, payloadSize uint64) (*storagemarket.PackingResult, error) {
-	// because we use the PadReader directly during Add Piece we need to produce the
-	// correct amount of zeroes
-	// (alternative would be to keep precise track of sector offsets for each
-	// piece which is just too much work for a seldom used feature)
-	paddedReader, err := shared.NewInflatorReader(reader, payloadSize, deal.Proposal.PieceSize.Unpadded())
-	if err != nil {
-		return nil, err
-	}
-
+func handoffDeal(ctx context.Context, environment ProviderDealEnvironment, deal storagemarket.MinerDeal, path string) (*storagemarket.PackingResult, error) {
 	return environment.Node().OnDealComplete(
 		ctx,
 		storagemarket.MinerDeal{
@@ -426,9 +405,11 @@ func handoffDeal(ctx context.Context, environment ProviderDealEnvironment, deal 
 			PublishCid:         deal.PublishCid,
 			DealID:             deal.DealID,
 			FastRetrieval:      deal.FastRetrieval,
+
+			PieceType: deal.PieceType,
 		},
 		deal.Proposal.PieceSize.Unpadded(),
-		paddedReader,
+		strings.NewReader(path),
 	)
 }
 
@@ -466,12 +447,6 @@ func recordPiece(environment ProviderDealEnvironment, deal storagemarket.MinerDe
 
 // CleanupDeal clears the filestore once we know the mining component has read the data and it is in a sealed sector
 func CleanupDeal(ctx fsm.Context, environment ProviderDealEnvironment, deal storagemarket.MinerDeal) error {
-	if deal.PiecePath != "" {
-		err := environment.FileStore().Delete(deal.PiecePath)
-		if err != nil {
-			log.Warnf("deleting piece at path %s: %w", deal.PiecePath, err)
-		}
-	}
 	if deal.MetadataPath != "" {
 		err := environment.FileStore().Delete(deal.MetadataPath)
 		if err != nil {
