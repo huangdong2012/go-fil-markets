@@ -409,7 +409,7 @@ func handoffDeal(ctx context.Context, environment ProviderDealEnvironment, deal 
 			PieceType: deal.PieceType,
 		},
 		deal.Proposal.PieceSize.Unpadded(),
-		strings.NewReader(path),
+		shared.NewStringReadSeekStarter(path),
 	)
 }
 
