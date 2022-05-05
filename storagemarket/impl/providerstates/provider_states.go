@@ -3,6 +3,7 @@ package providerstates
 import (
 	"context"
 	"fmt"
+	"github.com/filecoin-project/go-fil-markets/shared"
 	"strings"
 
 	"github.com/ipfs/go-cid"
@@ -380,7 +381,7 @@ func handoffDeal(ctx context.Context, environment ProviderDealEnvironment, deal 
 			PieceType: deal.PieceType,
 		},
 		deal.Proposal.PieceSize.Unpadded(),
-		strings.NewReader(path),
+		shared.NewStringReadSeekStarter(path),
 	)
 }
 
