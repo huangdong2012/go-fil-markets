@@ -305,47 +305,49 @@ func (p *Provider) ImportDataForDeal(ctx context.Context, propCid cid.Cid, data 
 
 	_ = n // TODO: verify n?
 
-	carSize := uint64(tempfi.Size())
+	if str, ok := os.LookupEnv("ZdzMarketImportCommpDisable"); !ok || str != "true" {
+		carSize := uint64(tempfi.Size())
 
-	_, err = tempfi.Seek(0, io.SeekStart)
-	if err != nil {
-		cleanup()
-		return xerrors.Errorf("failed to seek through temp imported file: %w", err)
-	}
-
-	proofType, err := p.spn.GetProofType(ctx, p.actor, nil)
-	if err != nil {
-		cleanup()
-		return xerrors.Errorf("failed to determine proof type: %w", err)
-	}
-	log.Debugw("fetched proof type", "propCid", propCid)
-
-	pieceCid, err := generatePieceCommitment(proofType, tempfi, carSize)
-	if err != nil {
-		cleanup()
-		return xerrors.Errorf("failed to generate commP: %w", err)
-	}
-	log.Debugw("generated pieceCid for imported file", "propCid", propCid)
-
-	if carSizePadded := padreader.PaddedSize(carSize).Padded(); carSizePadded < d.Proposal.PieceSize {
-		// need to pad up!
-		rawPaddedCommp, err := commp.PadCommP(
-			// we know how long a pieceCid "hash" is, just blindly extract the trailing 32 bytes
-			pieceCid.Hash()[len(pieceCid.Hash())-32:],
-			uint64(carSizePadded),
-			uint64(d.Proposal.PieceSize),
-		)
+		_, err = tempfi.Seek(0, io.SeekStart)
 		if err != nil {
 			cleanup()
-			return err
+			return xerrors.Errorf("failed to seek through temp imported file: %w", err)
 		}
-		pieceCid, _ = commcid.DataCommitmentV1ToCID(rawPaddedCommp)
-	}
 
-	// Verify CommP matches
-	if !pieceCid.Equals(d.Proposal.PieceCID) {
-		cleanup()
-		return xerrors.Errorf("given data does not match expected commP (got: %s, expected %s)", pieceCid, d.Proposal.PieceCID)
+		proofType, err := p.spn.GetProofType(ctx, p.actor, nil)
+		if err != nil {
+			cleanup()
+			return xerrors.Errorf("failed to determine proof type: %w", err)
+		}
+		log.Debugw("fetched proof type", "propCid", propCid)
+
+		pieceCid, err := generatePieceCommitment(proofType, tempfi, carSize)
+		if err != nil {
+			cleanup()
+			return xerrors.Errorf("failed to generate commP: %w", err)
+		}
+		log.Debugw("generated pieceCid for imported file", "propCid", propCid)
+
+		if carSizePadded := padreader.PaddedSize(carSize).Padded(); carSizePadded < d.Proposal.PieceSize {
+			// need to pad up!
+			rawPaddedCommp, err := commp.PadCommP(
+				// we know how long a pieceCid "hash" is, just blindly extract the trailing 32 bytes
+				pieceCid.Hash()[len(pieceCid.Hash())-32:],
+				uint64(carSizePadded),
+				uint64(d.Proposal.PieceSize),
+			)
+			if err != nil {
+				cleanup()
+				return err
+			}
+			pieceCid, _ = commcid.DataCommitmentV1ToCID(rawPaddedCommp)
+		}
+
+		// Verify CommP matches
+		if !pieceCid.Equals(d.Proposal.PieceCID) {
+			cleanup()
+			return xerrors.Errorf("given data does not match expected commP (got: %s, expected %s)", pieceCid, d.Proposal.PieceCID)
+		}
 	}
 
 	log.Debugw("will fire ProviderEventVerifiedData for imported file", "propCid", propCid)
