@@ -3,18 +3,16 @@ package storageimpl
 import (
 	"context"
 	"fmt"
-	"os"
 	"time"
 
+	"github.com/filecoin-project/go-address"
+	"github.com/filecoin-project/go-state-types/abi"
+	metadata2 "github.com/filecoin-project/index-provider/metadata"
 	"github.com/ipfs/go-cid"
 	bstore "github.com/ipfs/go-ipfs-blockstore"
 	carv2 "github.com/ipld/go-car/v2"
 	"github.com/libp2p/go-libp2p-core/peer"
 	"golang.org/x/xerrors"
-
-	"github.com/filecoin-project/go-address"
-	"github.com/filecoin-project/go-state-types/abi"
-	metadata2 "github.com/filecoin-project/index-provider/metadata"
 
 	"github.com/filecoin-project/go-fil-markets/commp"
 	"github.com/filecoin-project/go-fil-markets/filestore"
@@ -88,12 +86,6 @@ func (p *providerDealEnvironment) TerminateBlockstore(proposalCid cid.Cid, path 
 	// stop tracking it.
 	if err := p.p.stores.Untrack(proposalCid.String()); err != nil {
 		log.Warnf("failed to untrack read write blockstore, proposalCid=%s, car_path=%s: %s", proposalCid, path, err)
-	}
-
-	// delete the backing CARv2 file as it was a temporary file we created for
-	// this storage deal; the piece has now been handed off, or the deal has failed.
-	if err := os.Remove(path); err != nil {
-		log.Warnf("failed to delete carv2 file on termination, car_path=%s: %s", path, err)
 	}
 
 	return nil

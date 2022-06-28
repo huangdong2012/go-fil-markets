@@ -36,6 +36,9 @@ const AskProtocolID = "/fil/storage/ask/1.1.0"
 const OldDealStatusProtocolID = "/fil/storage/status/1.0.1"
 const DealStatusProtocolID = "/fil/storage/status/1.1.0"
 
+const PieceTypeFile = 0
+const PieceTypeCar = 1
+
 // Balance represents a current balance of funds in the StorageMarketActor.
 type Balance struct {
 	Locked    abi.TokenAmount
@@ -115,6 +118,8 @@ type MinerDeal struct {
 	SectorNumber      abi.SectorNumber
 
 	InboundCAR string
+
+	PieceType int
 }
 
 // NewDealStages creates a new DealStages object ready to be used.
